@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Must See TV</title>
+
+    <!-- This is where the CSS (styling) goes. Instead of a separate style.css file, we put it here. -->
+    <style>
+        body {
+            font-family: sans-serif; /* Use a common, easy-to-read font */
+            margin: 20px;
+            background-color: #f4f4f4; /* Light grey background */
+            color: #333; /* Dark grey text */
+            line-height: 1.6; /* Makes text easier to read */
+        }
+
+        h1, h2 {
+            color: #1a73e8; /* A nice blue for headings */
+        }
+
+        /* Styles for different sections of the page */
+        .section {
+            background-color: white;
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); /* Adds a subtle shadow */
+        }
+
+        button {
+            background-color: #1a73e8; /* Blue background for buttons */
+            color: white; /* White text on buttons */
+            border: none;
+            padding: 10px 15px;
+            margin: 5px 0;
+            cursor: pointer; /* Changes mouse cursor to a hand when hovering */
+            border-radius: 4px; /* Slightly rounded corners */
+            font-size: 1em;
+        }
+
+        button:hover {
+            background-color: #1558b3; /* Darker blue when hovering */
+        }
+
+        button.secondary-action { /* For less prominent buttons like 'Remove' or 'Clear History' */
+            background-color: #e0e0e0;
+            color: #333;
+        }
+        button.secondary-action:hover {
+            background-color: #bdbdbd;
+        }
+
+        input[type="text"] {
+            padding: 8px;
+            margin: 5px 0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: calc(100% - 22px); /* Make input fields take up available width, accounting for padding and border */
+            box-sizing: border-box; /* Ensures padding and border don't add to the width */
+            max-width: 400px;
+            font-size: 1em;
+        }
+
+        #channels-list .channel-item { /* Styling for each channel entry */
+            background-color: #f9f9f9;
+            border: 1px solid #eee;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            display: flex; /* Allows for better alignment of items */
+            justify-content: space-between; /* Puts space between content and button */
+            align-items: center; /* Vertically aligns items */
+        }
+
+        #channels-list .channel-item-details {
+            flex-grow: 1; /* Allows details to take up available space */
+        }
+
+
+        #new-videos-log, #todays-videos-list {
+            background-color: #fff;
+            padding: 10px;
+            border: 1px solid #ddd;
+            margin-top: 10px;
+            min-height: 50px;
+            max-height: 300px;
+            overflow-y: auto; /* Adds a scrollbar if content is too long */
+            border-radius: 4px;
+        }
+
+        #new-videos-log p {
+            margin: 5px 0;
+            padding-bottom: 5px;
+            border-bottom: 1px dashed #eee;
+            font-size: 0.9em;
+        }
+        #new-videos-log p:last-child {
+            border-bottom: none;
+        }
+
+        ul#todays-videos-list {
+            list-style-type: none; /* Removes bullet points from lists */
+            padding: 0;
+        }
+
+        ul#todays-videos-list li {
+            padding: 8px 0;
+            border-bottom: 1px dashed #eee; /* Light line between list items */
+            display: flex;
+            align-items: center;
+        }
+
+        ul#todays-videos-list li:last-child {
+            border-bottom: none; /* No line for the last item */
+        }
+
+        ul#todays-videos-list img {
+            margin-right: 10px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <h1>My Must See TV Setup</h1>
+
+    <!-- Section to Authorize with YouTube -->
+    <div id="auth-section" class="section">
+        <h2>Step 1: Connect to YouTube</h2>
+        <button id="authorize-button">Connect to YouTube</button>
+        <p id="auth-status">Status: Not Connected</p>
+    </div>
+
+    <!-- Section to manage channels and filters -->
+    <div id="settings-section" class="section" style="display: none;"> <!-- Hidden until authorized -->
+        <h2>Step 2: Channel Settings</h2>
+        <p>Add your favorite YouTube channels and keywords to filter their videos.</p>
+        <div id="channels-list">
+            <!-- Channels will be added here by JavaScript -->
+        </div>
+        <input type="text" id="new-channel-id" placeholder="YouTube Channel ID (e.g., UC_x5XG1OV2P6uZZ5FSM9Ttw)">
+        <input type="text" id="new-channel-keywords" placeholder="Keywords (e.g., A Closer Look, Monologue), comma-separated">
+        <button id="add-channel-button">Add Channel</button>
+        <br>
+        <button id="save-settings-button">Save All Settings</button>
+    </div>
+
+    <!-- Section to show what's new and refresh -->
+    <div id="dashboard-section" class="section" style="display: none;"> <!-- Hidden until authorized -->
+        <h2>Step 3: Your Daily Lineup</h2>
+        <p>Fetch the latest videos based on your settings and add them to your "Must See TV" YouTube playlist.</p>
+        <button id="refresh-button">Fetch New Videos & Update Playlist</button>
+        <button id="clear-history-button" class="secondary-action">Clear Processed Video History</button>
+        <h3>Activity Log:</h3>
+        <div id="new-videos-log">
+            <!-- Log messages about fetched videos will appear here -->
+        </div>
+        <h3>Videos to be Added / Recently Added:</h3>
+        <ul id="todays-videos-list">
+            <!-- List of newly fetched videos for the playlist -->
+        </ul>
+    </div>
+
+    <!-- This is where the JavaScript (the brain) goes. Instead of a separate script.js file, we put it here. -->
+    <script>
+        // --- HTML Element References ---
+        // These lines get references to the different parts of our HTML page
+        // so JavaScript can interact with them (like reading input or changing text).
+        const authorizeButton = document.getElementById('authorize-button');
+        const authStatus = document.getElementById('auth-status');
+        const settingsSection = document.getElementById('settings-section');
+        const dashboardSection = document.getElementById('dashboard-section');
+
+        const channelsListDiv = document.getElementById('channels-list');
+        const newChannelIdInput = document.getElementById('new-channel-id');
+        const newChannelKeywordsInput = document.getElementById('new-channel-keywords');
+        const addChannelButton = document.getElementById('add-channel-button');
+        const saveSettingsButton = document.getElementById('save-settings-button');
+
+        const refreshButton = document.getElementById('refresh-button');
+        const newVideosLog = document.getElementById('new-videos-log');
+        const todaysVideosList = document.getElementById('todays-videos-list');
+        const clearHistoryButton = document.getElementById('clear-history-button');
+
+        // --- Configuration ---
+        // This is the name of your special YouTube playlist.
+        // IMPORTANT: Make sure you have a playlist with this EXACT name in your YouTube account,
+        // or the app will create one for you.
+        const TARGET_PLAYLIST_NAME = "Must See TV";
+        let targetPlaylistId = null; // We'll find this ID later after connecting to YouTube.
+
+        // This will hold our list of channels and their filters.
+        // It's like a list of instructions for what TV shows to record.
+        // Example: [{ channelId: "UC...", keywords: "keyword1, keyword2" }, ...]
+        let channelsConfig = [];
+
+        // --- Authentication State ---
+        // These will store the "keys" YouTube gives us after we log in.
+        // Think of them as temporary access badges to your YouTube account.
+        let accessToken = null;
+        let refreshToken = null; // A special key to get a new access token when the old one expires.
+
+        // --- Serverless Function API ---
+        // This is the web address (URL) where your "Smart Assistant" serverless functions live.
+        // If you're testing locally with Netlify Dev, it's usually '/.netlify/functions'.
+        // If you deploy to Netlify, it will be 'https://your-site-name.netlify.app/.netlify/functions'.
+        // ** YOU MIGHT NEED TO CHANGE THIS BASED ON YOUR SETUP **
+        const API_BASE_URL = '/.netlify/functions'; // Example for Netlify
+
+        // --- Processed Videos ---
+        // This Set will store the IDs of videos we've already processed and added to the playlist.
+        // A "Set" is like a list but automatically makes sure each item is unique.
+        // This helps us avoid adding the same video multiple times.
+        let processedVideoIds = new Set();
+
+        // --- Helper Functions ---
+
+        // Function to display messages in the log area on the webpage
+        function logMessage(message, isError = false) {
+            const p = document.createElement('p');
+            // Show the current time with the message
+            p.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            if (isError) {
+                p.style.color = 'red'; // Make error messages stand out
+            }
+            // Add the new message to the top of the log
+            newVideosLog.insertBefore(p, newVideosLog.firstChild);
+        }
+
+        // --- Settings Management (Saving and Loading from Browser Memory) ---
+
+        // Function to load settings (channels, tokens, playlist ID, processed videos)
+        // from the browser's local storage. Think of local storage as a small notepad
+        // where the browser can remember things for this website.
+        function loadAllSettings() {
+            // Load channel configurations
+            const savedChannels = localStorage.getItem('mustSeeTvChannels');
+            if (savedChannels) {
+                channelsConfig = JSON.parse(savedChannels); // JSON.parse turns saved text back into a list
+            }
+
+            // Load authentication tokens
+            const savedAccessToken = localStorage.getItem('mustSeeTvAccessToken');
+            const savedRefreshToken = localStorage.getItem('mustSeeTvRefreshToken');
+            if (savedAccessToken) {
+                accessToken = savedAccessToken;
+                refreshToken = savedRefreshToken;
+            }
+
+            // Load target playlist ID
+            const savedPlaylistId = localStorage.getItem('mustSeeTvPlaylistId');
+            if (savedPlaylistId) {
+                targetPlaylistId = savedPlaylistId;
+            }
+
+            // Load processed video IDs
+            const savedProcessedIds = localStorage.getItem('mustSeeTvProcessedIds');
+            if (savedProcessedIds) {
+                processedVideoIds = new Set(JSON.parse(savedProcessedIds));
+            }
+
+            // Update the UI based on loaded settings
+            renderChannelsList();
+            updateUIAfterAuth(); // This function will check tokens and update UI
+        }
+
+        // Function to save all current settings to the browser's local storage.
+        function saveAllSettings() {
+            localStorage.setItem('mustSeeTvChannels', JSON.stringify(channelsConfig));
+            if (accessToken) localStorage.setItem('mustSeeTvAccessToken', accessToken);
+            if (refreshToken) localStorage.setItem('mustSeeTvRefreshToken', refreshToken);
+            if (targetPlaylistId) localStorage.setItem('mustSeeTvPlaylistId', targetPlaylistId);
+            localStorage.setItem('mustSeeTvProcessedIds', JSON.stringify(Array.from(processedVideoIds)));
+            logMessage('All settings and processed video history saved to browser.');
+        }
+
+        // --- Channel Management UI ---
+
+        // Function to display the list of configured channels on the page
+        function renderChannelsList() {
+            channelsListDiv.innerHTML = ''; // Clear the current list from the page
+            if (channelsConfig.length === 0) {
+                channelsListDiv.innerHTML = '<p>No channels added yet. Add some below!</p>';
+            }
+            channelsConfig.forEach((channel, index) => {
+                const channelDiv = document.createElement('div');
+                channelDiv.className = 'channel-item'; // For styling
+                channelDiv.innerHTML = `
+                    <div class="channel-item-details">
+                        <strong>Channel ID:</strong> ${channel.channelId}<br>
+                        <strong>Keywords:</strong> ${channel.keywords || '<em>Any (no keywords)</em>'}
+                    </div>
+                    <button onclick="removeChannel(${index})" class="secondary-action">Remove</button>
+                `;
+                channelsListDiv.appendChild(channelDiv);
+            });
+        }
+
+        // Function to add a new channel to our configuration list (doesn't save yet)
+        function addChannel() {
+            const channelId = newChannelIdInput.value.trim();
+            const keywords = newChannelKeywordsInput.value.trim(); // Keywords are comma-separated
+            if (channelId) {
+                channelsConfig.push({ channelId, keywords });
+                newChannelIdInput.value = '';    // Clear input field after adding
+                newChannelKeywordsInput.value = ''; // Clear input field after adding
+                renderChannelsList(); // Update the displayed list
+                logMessage(`Channel ${channelId} added to list. Click 'Save All Settings'.`);
+            } else {
+                alert('Please enter a Channel ID.');
+            }
+        }
+
+        // Function to remove a channel from our configuration list (doesn't save yet)
+        function removeChannel(index) {
+            // 'splice' removes items from a list. Here, it removes 1 item at the given 'index'.
+            const removedChannel = channelsConfig.splice(index, 1);
+            renderChannelsList(); // Update the displayed list
+            logMessage(`Channel ${removedChannel[0].channelId} removed from list. Click 'Save All Settings'.`);
+        }
+
+        // --- Authentication Flow (Connecting to YouTube) ---
+
+        // This function runs when the page loads or when Google sends the user back after login.
+        // It checks the URL for authentication tokens.
+        function handleOAuthRedirectOnLoad() {
+            // The URL might look like: http://yoursite.com/#access_token=XYZ&refresh_token=ABC...
+            if (window.location.hash.includes('access_token')) {
+                const params = new URLSearchParams(window.location.hash.substring(1)); // Remove '#' and parse
+                const receivedAccessToken = params.get('access_token');
+                const receivedRefreshToken = params.get('refresh_token'); // Google might not always send a refresh token
+
+                if (receivedAccessToken) {
+                    accessToken = receivedAccessToken;
+                    if (receivedRefreshToken) { // Only update refresh token if a new one is provided
+                        refreshToken = receivedRefreshToken;
+                    }
+                    logMessage('Successfully received authentication tokens from Google.');
+                    saveAllSettings(); // Save the new tokens immediately
+                    updateUIAfterAuth(); // Update the webpage display
+
+                    // Important: Find or create the "Must See TV" playlist right after getting tokens.
+                    findOrCreateMustSeeTvPlaylist();
+                } else {
+                    logMessage('Authentication redirect detected, but no access token found.', true);
+                }
+                // Clear the tokens from the URL bar for cleanliness and a bit of security.
+                window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+            }
+        }
+
+        // This function is called to update the UI elements based on authentication status
+        function updateUIAfterAuth() {
+            if (accessToken) {
+                authStatus.textContent = 'Status: Connected to YouTube!';
+                authStatus.style.color = 'green';
+                settingsSection.style.display = 'block'; // Show settings section
+                dashboardSection.style.display = 'block'; // Show dashboard section
+                authorizeButton.textContent = 'Reconnect / Switch Account'; // Change button text
+            } else {
+                authStatus.textContent = 'Status: Not Connected. Please connect to YouTube.';
+                authStatus.style.color = 'red';
+                settingsSection.style.display = 'none';  // Hide settings
+                dashboardSection.style.display = 'none'; // Hide dashboard
+                authorizeButton.textContent = 'Connect to YouTube';
+            }
+        }
+
+
+        // Function to start the YouTube login process
+        async function initiateOAuth() {
+            logMessage('Attempting to connect to YouTube...');
+            try {
+                // Ask our serverless function (Smart Assistant) for the special Google Auth URL
+                const response = await fetch(`${API_BASE_URL}/auth-url`);
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.error || `Failed to get auth URL: ${response.statusText}`);
+                }
+                const data = await response.json();
+                // Redirect the user's browser to Google's login page
+                window.location.href = data.authUrl;
+            } catch (error) {
+                console.error("Error initiating OAuth:", error);
+                logMessage(`Error connecting: ${error.message}`, true);
+                authStatus.textContent = 'Status: Error initiating connection.';
+                authStatus.style.color = 'red';
+            }
+        }
+
+        // --- YouTube API Interactions (via our Serverless Functions) ---
+
+        // Function to find (or create, if it doesn't exist) our "Must See TV" playlist
+        async function findOrCreateMustSeeTvPlaylist() {
+            if (!accessToken) {
+                logMessage("Cannot find/create playlist: Not authenticated with YouTube.", true);
+                return;
+            }
+            logMessage(`Looking for your playlist: "${TARGET_PLAYLIST_NAME}"...`);
+            try {
+                // Talk to our 'youtube-api' serverless function
+                const response = await fetch(`${API_BASE_URL}/youtube-api`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`, // Send our access token for permission
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        action: 'findOrCreatePlaylist', // Tell the function what to do
+                        payload: { playlistName: TARGET_PLAYLIST_NAME } // Data needed for the action
+                    })
+                });
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.error || `API Error: ${response.statusText}`);
+                }
+                const data = await response.json();
+                targetPlaylistId = data.playlistId; // Store the playlist ID
+                saveAllSettings(); // Save the newly found playlist ID
+                logMessage(`Playlist "${TARGET_PLAYLIST_NAME}" is ready (ID: ${targetPlaylistId}).`);
+            } catch (error) {
+                console.error("Error finding/creating playlist:", error);
+                logMessage(`Error with playlist: ${error.message}`, true);
+                targetPlaylistId = null; // Reset if error
+            }
+        }
+
+        // --- Main Video Fetching and Playlist Update Logic ---
+
+        // Function to fetch new videos based on settings and update the YouTube playlist
+        async function refreshAndProcessVideos() {
+            if (!accessToken || !targetPlaylistId) {
+                logMessage("Cannot fetch videos: Not connected to YouTube or playlist not set up. Please connect and ensure playlist exists.", true);
+                alert("Please connect to YouTube first and ensure the playlist is set up.");
+                return;
+            }
+            if (channelsConfig.length === 0) {
+                logMessage("No channels configured. Please add channels in settings.", true);
+                alert("Please add some channels in the settings section first.");
+                return;
+            }
+
+            logMessage("Starting video fetch and playlist update process...");
+            todaysVideosList.innerHTML = '<li>Loading videos...</li>'; // Clear previous list from UI
+            let allNewlyFetchedVideos = []; // To collect videos from all channels that are new
+
+            // Optional: Get video IDs already in the playlist to double-check against.
+            // This provides an extra layer of de-duplication.
+            let videoIdsCurrentlyInPlaylist = new Set();
+            try {
+                logMessage("Checking videos currently in your YouTube playlist...");
+                const playlistItemsResponse = await fetch(`${API_BASE_URL}/youtube-api`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'getPlaylistItems', payload: { playlistId: targetPlaylistId }})
+                });
+                if (playlistItemsResponse.ok) {
+                    const playlistData = await playlistItemsResponse.json();
+                    playlistData.videoIds.forEach(id => videoIdsCurrentlyInPlaylist.add(id));
+                    logMessage(`Found ${videoIdsCurrentlyInPlaylist.size} videos already in the playlist "${TARGET_PLAYLIST_NAME}".`);
+                } else {
+                    logMessage("Could not fetch current playlist items. Will rely on local processed history.", true);
+                }
+            } catch (error) {
+                logMessage(`Error fetching current playlist items: ${error.message}. Proceeding without this check.`, true);
+            }
+
+            // Define "Recent": Fetch videos published in the last, say, 3 days.
+            // This helps focus on the newest content.
+            const threeDaysAgo = new Date();
+            threeDaysAgo.setDate(threeDaysAgo.getDate() - 3); // Go back 3 days
+            // Format: YYYY-MM-DDTHH:mm:ssZ (which YouTube API likes)
+            const publishedAfterDate = threeDaysAgo.toISOString();
+
+            for (const channel of channelsConfig) {
+                logMessage(`Fetching videos for channel ID: ${channel.channelId} (Keywords: ${channel.keywords || 'Any'})...`);
+                try {
+                    const response = await fetch(`${API_BASE_URL}/youtube-api`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`, // Needed if serverless function checks it
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            action: 'fetchChannelVideos',
+                            payload: {
+                                channelId: channel.channelId,
+                                keywords: channel.keywords,
+                                publishedAfter: publishedAfterDate // Only get recent videos
+                            }
+                        })
+                    });
+                    if (!response.ok) {
+                        const errData = await response.json();
+                        throw new Error(errData.error || `Server error fetching for ${channel.channelId}: ${response.statusText}`);
+                    }
+                    const data = await response.json();
+                    let fetchedChannelVideos = data.videos || [];
+                    logMessage(`Found ${fetchedChannelVideos.length} potential videos for ${channel.channelId} (after server-side keyword filter).`);
+
+                    // Further filter: only keep videos not already processed and not already in the live playlist
+                    fetchedChannelVideos.forEach(video => {
+                        if (!processedVideoIds.has(video.id) && !videoIdsCurrentlyInPlaylist.has(video.id)) {
+                            allNewlyFetchedVideos.push(video); // Add to our list to be added to playlist
+                        } else {
+                            logMessage(`Skipping (already processed or in playlist): "${video.title}"`);
+                        }
+                    });
+                } catch (error) {
+                    console.error(`Error fetching for channel ${channel.channelId}:`, error);
+                    logMessage(`Error for channel ${channel.channelId}: ${error.message}`, true);
+                }
+            }
+
+            if (allNewlyFetchedVideos.length === 0) {
+                logMessage("No new, unique videos found matching your criteria this time.");
+                todaysVideosList.innerHTML = '<li>No new videos to add.</li>';
+                return;
+            }
+
+            // Sort all collected new videos by publish date.
+            // To mimic a TV block, we want earlier shows (older published) first.
+            // Since YouTube adds new items to the *top* (position 0) of a playlist,
+            // we should add the oldest of our new videos first.
+            allNewlyFetchedVideos.sort((a, b) => new Date(a.publishedAt) - new Date(b.publishedAt));
+
+            logMessage(`Found ${allNewlyFetchedVideos.length} new videos in total. Adding to playlist "${TARGET_PLAYLIST_NAME}"...`);
+            todaysVideosList.innerHTML = ''; // Clear "Loading..." message
+
+            for (const video of allNewlyFetchedVideos) {
+                // Display on the webpage
+                const listItem = document.createElement('li');
+                listItem.innerHTML = `<img src="${video.thumbnail}" alt="thumbnail" width="80" style="vertical-align: middle;"> ${video.title}`;
+                todaysVideosList.appendChild(listItem);
+
+                // Add to YouTube playlist via our serverless function
+                try {
+                    logMessage(`Adding "${video.title}" to YouTube playlist...`);
+                    const addResponse = await fetch(`${API_BASE_URL}/youtube-api`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            action: 'addVideoToPlaylist',
+                            payload: {
+                                playlistId: targetPlaylistId,
+                                videoId: video.id
+                            }
+                        })
+                    });
+                    if (!addResponse.ok) {
+                        const errData = await addResponse.json();
+                        throw new Error(errData.error || `Server error adding video ${video.id}: ${addResponse.statusText}`);
+                    }
+                    const addData = await addResponse.json();
+                    if (addData.success) {
+                        logMessage(`Successfully added to YouTube: "${video.title}"`);
+                        processedVideoIds.add(video.id); // Mark as processed so we don't add it again
+                    } else {
+                        logMessage(`Failed to add (API reported no success): "${video.title}"`, true);
+                    }
+                } catch (error) {
+                    console.error(`Error adding video ${video.id} to playlist:`, error);
+                    logMessage(`Error adding "${video.title}" to YouTube: ${error.message}`, true);
+                    // Optionally, don't mark as processed if adding failed, so it can be retried next time.
+                }
+            }
+            saveAllSettings(); // Save the updated list of processed video IDs
+            logMessage("Playlist update process complete!");
+            if (allNewlyFetchedVideos.length > 0) {
+                 alert(`${allNewlyFetchedVideos.length} new videos added to your playlist! Check YouTube.`);
+            }
+        }
+
+        // Function to clear the history of processed video IDs from browser storage
+        function clearProcessedHistory() {
+            if (confirm("Are you sure you want to clear the history of processed videos? This means the app will forget which videos it has added to the playlist, and might re-add old ones if they are still recent and match your filters.")) {
+                processedVideoIds.clear();
+                saveAllSettings(); // Save the now-empty set
+                logMessage("Processed video history cleared. Next refresh might re-add videos.");
+            }
+        }
+
+        // --- Event Listeners (Making buttons and page load do things) ---
+
+        // When the "Connect to YouTube" button is clicked, run the initiateOAuth function.
+        authorizeButton.addEventListener('click', initiateOAuth);
+
+        // When the "Add Channel" button is clicked, run the addChannel function.
+        addChannelButton.addEventListener('click', addChannel);
+
+        // When the "Save All Settings" button is clicked, run the saveAllSettings function.
+        saveSettingsButton.addEventListener('click', saveAllSettings);
+
+        // When the "Fetch New Videos & Update Playlist" button is clicked, run refreshAndProcessVideos.
+        refreshButton.addEventListener('click', refreshAndProcessVideos);
+
+        // When the "Clear Processed History" button is clicked
+        clearHistoryButton.addEventListener('click', clearProcessedHistory);
+
+        // When the webpage first loads:
+        window.addEventListener('load', () => {
+            logMessage("App started. Loading settings...");
+            loadAllSettings(); // Load any saved settings (channels, tokens, etc.)
+            handleOAuthRedirectOnLoad(); // Check if we're coming back from Google login
+            // If access token is already loaded and valid, also try to ensure playlist ID is known
+            if (accessToken && !targetPlaylistId) {
+                findOrCreateMustSeeTvPlaylist();
+            } else if (accessToken && targetPlaylistId) {
+                logMessage(`Playlist "${TARGET_PLAYLIST_NAME}" ID is known: ${targetPlaylistId}`);
+            }
+            updateUIAfterAuth(); // Final UI update based on whatever state we're in
+        });
+
+    </script>
+</body>
+</html>
