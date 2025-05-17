@@ -1,0 +1,28 @@
+# netlify.toml - Configuration file for Netlify
+
+# Build settings tell Netlify how to build your site and functions.
+[build]
+  # Directory where your serverless functions are located,
+  # relative to the root of your project.
+  functions = "netlify/functions"
+
+  # Directory containing your site's static files (like index.html)
+  # that Netlify should publish to the live URL.
+  # "." means the root of your project.
+  publish = "."
+
+# Settings specifically for 'netlify dev' (your local development server)
+[dev]
+  # The port number 'netlify dev' will try to use for your local website.
+  # If this port is already in use on your computer, 'netlify dev'
+  # will usually try the next available one (e.g., 8889).
+  port = 8888
+
+  # Directory to serve static files from for 'netlify dev'.
+  # "." means the root of your project.
+  publish = "."
+
+  # Optional: You can sometimes specify a bundler for functions.
+  # Netlify often defaults to "esbuild" or "zisi" (zip-it-and-ship-it).
+  # For now, we don't need to explicitly set this.
+  # node_bundler = "esbuild"
