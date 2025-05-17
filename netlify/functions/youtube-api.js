@@ -1,16 +1,18 @@
 // netlify/functions/youtube-api.js
 // This function will talk to the YouTube API to search for videos and update playlists.
-// It will require the user's access_token to act on their behalf.
+// It will require the user's access_token to act on their behalf for playlist modifications.
 
 // IMPORTANT: Set your YouTube Data API Key in Netlify environment variables
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY; // Your regular YouTube Data API Key
+
+// We expect node-fetch@2 to be installed, which uses require()
 const fetch = require('node-fetch');
 
-// Helper to make authenticated calls to YouTube API
-async function callYouTubeApi(endpoint, accessToken, method = 'GET', body = null) {
+// Helper function to make authenticated calls to the YouTube API using a user's access token
+async function callYouTubeApiWithUserAuth(endpoint, accessToken, method = 'GET', body = null) {
     const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
     const headers = {
-        'Authorization': `Bearer ${accessToken}`, // User's access token
+        'Authorization': `Bearer ${accessToken}`, // User's access token for actions on their behalf
         'Accept': 'application/json',
     };
     if (method === 'POST' || method === 'PUT') {
@@ -25,84 +27,114 @@ async function callYouTubeApi(endpoint, accessToken, method = 'GET', body = null
     const response = await fetch(`${YOUTUBE_API_BASE}${endpoint}`, options);
     if (!response.ok) {
         const errorData = await response.json();
-        console.error("YouTube API Error:", errorData.error.message, "Status:", response.status);
-        throw new Error(`YouTube API request failed: ${errorData.error.message} (Status: ${response.status})`);
+        console.error("[User Auth] YouTube API Error:", errorData.error.message, "Status:", response.status, "Details:", errorData);
+        throw new Error(`[User Auth] YouTube API request failed: ${errorData.error.message} (Status: ${response.status})`);
     }
     return response.json();
 }
 
-
+// Main handler function for this serverless endpoint
 exports.handler = async (event, context) => {
+    // Check if the general YouTube API Key is set (needed for video searches)
     if (!YOUTUBE_API_KEY) {
-        return { statusCode: 500, body: JSON.stringify({ error: "Server configuration error: Missing YouTube API Key." }) };
+        console.error("[youtube-api] Server configuration error: Missing YouTube API Key.");
+        return {
+            statusCode: 500,
+            body: JSON.stringify({ error: "Server configuration error: Missing YouTube API Key." })
+        };
     }
 
-    // The client (your browser app) MUST send its access_token in the request header or body.
-    // We'll expect it in an 'Authorization' header like 'Bearer YOUR_ACCESS_TOKEN'.
+    // For actions requiring user authentication (like playlist management),
+    // the client (browser app) MUST send its access_token.
+    // We expect it in an 'Authorization' header: 'Bearer YOUR_ACCESS_TOKEN'.
     const authHeader = event.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return { statusCode: 401, body: JSON.stringify({ error: "Missing or invalid access token." }) };
-    }
-    const accessToken = authHeader.split(' ')[1];
+    let accessToken = null; // Initialize accessToken
 
-    // The client will tell us what action to perform and provide necessary data.
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        accessToken = authHeader.split(' ')[1];
+    }
+    // Note: Not all actions below strictly require an access token (e.g., fetchChannelVideos uses API key for search),
+    // but actions modifying user data (playlists) will fail if accessToken is missing/invalid.
+
+    // Get the desired action and payload from the client's request
     const { action, payload } = JSON.parse(event.body);
+    console.log(`[youtube-api] Action: ${action}, Payload:`, payload ? JSON.stringify(payload) : 'No payload');
+
 
     try {
+        // --- Action: Find or Create a specific YouTube Playlist ---
         if (action === 'findOrCreatePlaylist') {
+            if (!accessToken) return { statusCode: 401, body: JSON.stringify({ error: "Missing access token for findOrCreatePlaylist." }) };
             const { playlistName } = payload;
-            // 1. List user's playlists
-            let playlistsData = await callYouTubeApi(`/playlists?part=snippet&mine=true&maxResults=50`, accessToken);
+            console.log(`[youtube-api] Finding/creating playlist: ${playlistName}`);
+
+            // 1. List user's playlists to see if it already exists
+            let playlistsData = await callYouTubeApiWithUserAuth(`/playlists?part=snippet&mine=true&maxResults=50`, accessToken);
             let existingPlaylist = playlistsData.items.find(p => p.snippet.title === playlistName);
 
             if (existingPlaylist) {
+                console.log(`[youtube-api] Playlist "${playlistName}" found with ID: ${existingPlaylist.id}`);
                 return { statusCode: 200, body: JSON.stringify({ playlistId: existingPlaylist.id }) };
             } else {
                 // 2. Create playlist if not found
-                const newPlaylistData = await callYouTubeApi(`/playlists?part=snippet,status`, accessToken, 'POST', {
-                    snippet: { title: playlistName, description: "My daily dose of must-see TV!" },
-                    status: { privacyStatus: "private" } // or "public" or "unlisted"
+                console.log(`[youtube-api] Playlist "${playlistName}" not found. Creating new one...`);
+                const newPlaylistData = await callYouTubeApiWithUserAuth(`/playlists?part=snippet,status`, accessToken, 'POST', {
+                    snippet: { title: playlistName, description: "My daily dose of must-see TV generated by my app!" },
+                    status: { privacyStatus: "private" } // Or "public" or "unlisted"
                 });
+                console.log(`[youtube-api] Playlist "${playlistName}" created with ID: ${newPlaylistData.id}`);
                 return { statusCode: 200, body: JSON.stringify({ playlistId: newPlaylistData.id }) };
             }
         }
+        // --- Action: Fetch recent videos from a specific channel, filtered by keywords ---
         else if (action === 'fetchChannelVideos') {
             const { channelId, keywords, publishedAfter } = payload;
-            // Using search endpoint is more flexible for keywords and recency for a specific channel.
-            // Note: To get only "new" videos, we'd typically use 'publishedAfter'.
-            // We'll sort by date and take the most recent ones.
-            // The API key is used here because we are searching public data, not user-specific data.
-            let searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${channelId}&order=date&type=video&maxResults=10&key=${YOUTUBE_API_KEY}`; // Fetch 10 most recent
+            console.log(`[youtube-api] Fetching videos for channel: ${channelId}, Keywords: ${keywords || 'None'}, After: ${publishedAfter || 'Any'}`);
+
+            // The YouTube Search API (using an API Key) is good for finding public videos.
+            let searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${channelId}&order=date&type=video&maxResults=20&key=${YOUTUBE_API_KEY}`; // Fetch more (e.g., 20) to have a better chance after filtering
             if (publishedAfter) {
-                 searchUrl += `&publishedAfter=${publishedAfter}`; // e.g., 2023-01-01T00:00:00Z
+                 searchUrl += `&publishedAfter=${publishedAfter}`;
             }
 
-            const response = await fetch(searchUrl);
-            if (!response.ok) {
-                const errorData = await response.json();
+            const searchResponse = await fetch(searchUrl); // Using node-fetch here
+            if (!searchResponse.ok) {
+                const errorData = await searchResponse.json();
+                console.error("[youtube-api] YouTube Search API error:", errorData);
                 throw new Error(`YouTube Search API error: ${errorData.error.message}`);
             }
-            const videoData = await response.json();
+            const videoData = await searchResponse.json();
+            console.log(`[youtube-api] Found ${videoData.items.length} raw videos from search for channel ${channelId}.`);
 
+            // Map to a cleaner structure and include description
             let videos = videoData.items.map(item => ({
                 id: item.id.videoId,
                 title: item.snippet.title,
+                description: item.snippet.description, // Description included for filtering
                 publishedAt: item.snippet.publishedAt,
                 thumbnail: item.snippet.thumbnails.default.url
             }));
 
-            // Filter by keywords if provided
+            // Filter by keywords in title OR description
             if (keywords && keywords.trim() !== "") {
                 const keywordArray = keywords.toLowerCase().split(',').map(k => k.trim()).filter(k => k);
                 videos = videos.filter(video =>
-                    keywordArray.some(keyword => video.title.toLowerCase().includes(keyword))
+                    keywordArray.some(keyword => ( // Opening parenthesis for .some()
+                        (video.title && video.title.toLowerCase().includes(keyword)) ||
+                        (video.description && video.description.toLowerCase().includes(keyword))
+                    )) // Closing parenthesis for .some()
                 );
+                console.log(`[youtube-api] Filtered to ${videos.length} videos for channel ${channelId} after keyword check.`);
             }
             return { statusCode: 200, body: JSON.stringify({ videos }) };
         }
+        // --- Action: Add a specific video to a playlist ---
         else if (action === 'addVideoToPlaylist') {
+            if (!accessToken) return { statusCode: 401, body: JSON.stringify({ error: "Missing access token for addVideoToPlaylist." }) };
             const { playlistId, videoId } = payload;
-            const result = await callYouTubeApi(`/playlistItems?part=snippet`, accessToken, 'POST', {
+            console.log(`[youtube-api] Adding video ID ${videoId} to playlist ID ${playlistId}`);
+
+            const result = await callYouTubeApiWithUserAuth(`/playlistItems?part=snippet`, accessToken, 'POST', {
                 snippet: {
                     playlistId: playlistId,
                     position: 0, // Add to the top of the playlist
@@ -112,26 +144,35 @@ exports.handler = async (event, context) => {
                     }
                 }
             });
+            console.log(`[youtube-api] Successfully added video ID ${videoId} to playlist.`);
             return { statusCode: 200, body: JSON.stringify({ success: true, videoIdAdded: videoId, item: result }) };
         }
-        // Optional: Action to get existing playlist items (to avoid duplicates or for cleanup)
+        // --- Action: Get all video IDs currently in a playlist ---
         else if (action === 'getPlaylistItems') {
+            if (!accessToken) return { statusCode: 401, body: JSON.stringify({ error: "Missing access token for getPlaylistItems." }) };
             const { playlistId } = payload;
+            console.log(`[youtube-api] Getting items for playlist ID ${playlistId}`);
             let allItems = [];
             let nextPageToken = null;
             do {
-                const playlistItemsData = await callYouTubeApi(`/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=50${nextPageToken ? '&pageToken='+nextPageToken : ''}`, accessToken);
+                const playlistItemsData = await callYouTubeApiWithUserAuth(`/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=50${nextPageToken ? '&pageToken='+nextPageToken : ''}`, accessToken);
                 allItems = allItems.concat(playlistItemsData.items.map(item => item.snippet.resourceId.videoId));
                 nextPageToken = playlistItemsData.nextPageToken;
             } while (nextPageToken);
+            console.log(`[youtube-api] Found ${allItems.length} video IDs in playlist ${playlistId}.`);
             return { statusCode: 200, body: JSON.stringify({ videoIds: allItems }) };
         }
+        // --- Unknown Action ---
         else {
+            console.warn(`[youtube-api] Invalid action received: ${action}`);
             return { statusCode: 400, body: JSON.stringify({ error: "Invalid action." }) };
         }
 
     } catch (error) {
-        console.error("Error in youtube-api function:", error.message);
-        return { statusCode: 500, body: JSON.stringify({ error: error.message || "An internal server error occurred." }) };
+        console.error("[youtube-api] Error in handler function:", error.message, error.stack);
+        return {
+            statusCode: 500,
+            body: JSON.stringify({ error: error.message || "An internal server error occurred in youtube-api." })
+        };
     }
 };
