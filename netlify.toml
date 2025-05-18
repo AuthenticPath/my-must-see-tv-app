@@ -26,3 +26,10 @@
   # Netlify often defaults to "esbuild" or "zisi" (zip-it-and-ship-it).
   # For now, we don't need to explicitly set this.
   # node_bundler = "esbuild"
+
+[functions."scheduled-video-fetch"]
+  # This is a cron expression. It tells Netlify WHEN to run the function.
+  # This example means: "At minute 0, past every 12th hour."
+  # So, it would run at 00:00 UTC (midnight) and 12:00 UTC (noon).
+  # We can change this later if you want a different schedule!
+  schedule = "0 */1 * * *"
