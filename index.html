@@ -224,28 +224,70 @@
         // --- Settings Management (Saving and Loading from Browser Memory) ---
 
         // Function to load settings from the browser's local storage.
-        function loadAllSettings() {
-            const savedChannels = localStorage.getItem('mustSeeTvChannels');
-            if (savedChannels) {
-                channelsConfig = JSON.parse(savedChannels);
-            }
-            const savedAccessToken = localStorage.getItem('mustSeeTvAccessToken');
-            const savedRefreshToken = localStorage.getItem('mustSeeTvRefreshToken');
-            if (savedAccessToken) {
-                accessToken = savedAccessToken;
-                refreshToken = savedRefreshToken;
-            }
-            const savedPlaylistId = localStorage.getItem('mustSeeTvPlaylistId');
-            if (savedPlaylistId) {
-                targetPlaylistId = savedPlaylistId;
-            }
-            const savedProcessedIds = localStorage.getItem('mustSeeTvProcessedIds');
-            if (savedProcessedIds) {
-                processedVideoIds = new Set(JSON.parse(savedProcessedIds));
-            }
-            renderChannelsList();
-            updateUIAfterAuth(); // This function will check tokens and update UI
+
+// --- MODIFIED: loadAllSettings() function ---
+async function loadAllSettings() { // Made async
+    // Try to load channel configurations from Firestore first as the source of truth
+    let loadedChannelsFromBackend = false;
+    try {
+        logMessage('Attempting to load channel configuration from backend...');
+        const response = await fetch(`${API_BASE_URL}/user-settings`, {
+            method: 'POST', // Using POST for consistency, sending action in body
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ action: 'loadChannelConfig' })
+        });
+        
+        const data = await response.json();
+
+        if (response.ok && data.success && data.channelsConfig) {
+            channelsConfig = data.channelsConfig; // Populate from Firestore
+            localStorage.setItem('mustSeeTvChannels', JSON.stringify(channelsConfig)); // Update localStorage too
+            logMessage(`Successfully loaded ${channelsConfig.length} channel(s) from backend.`);
+            loadedChannelsFromBackend = true;
+        } else {
+            logMessage(`Could not load channel config from backend or none found: ${data.error || 'No channels in backend'}. Falling back to localStorage.`, true);
         }
+    } catch (error) {
+        console.error('Error loading channel config from backend:', error);
+        logMessage(`Error loading channel config from backend: ${error.message}. Falling back to localStorage.`, true);
+    }
+
+    // If backend load failed or found nothing, try localStorage for channels
+    if (!loadedChannelsFromBackend) {
+        const savedChannels = localStorage.getItem('mustSeeTvChannels');
+        if (savedChannels) {
+            channelsConfig = JSON.parse(savedChannels);
+            logMessage(`Loaded ${channelsConfig.length} channel(s) from localStorage.`);
+        } else {
+            logMessage('No channels found in localStorage either.');
+            channelsConfig = []; // Ensure it's an empty array if nothing found
+        }
+    }
+
+    // Load other settings from localStorage as before
+    const savedAccessToken = localStorage.getItem('mustSeeTvAccessToken');
+    const savedRefreshToken = localStorage.getItem('mustSeeTvRefreshToken');
+    if (savedAccessToken) {
+        accessToken = savedAccessToken;
+        refreshToken = savedRefreshToken;
+    }
+
+    const savedPlaylistId = localStorage.getItem('mustSeeTvPlaylistId');
+    if (savedPlaylistId) {
+        targetPlaylistId = savedPlaylistId;
+    }
+
+    const savedProcessedIds = localStorage.getItem('mustSeeTvProcessedIds');
+    if (savedProcessedIds) {
+        processedVideoIds = new Set(JSON.parse(savedProcessedIds));
+    }
+
+    renderChannelsList(); // Update the UI with whatever channelsConfig we ended up with
+    updateUIAfterAuth();
+    logMessage("Settings load process complete.");
+}
 
         // Function to save all current settings to local storage AND to Firestore via serverless function
         async function saveAllSettings() { // Added 'async'

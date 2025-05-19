@@ -44,41 +44,40 @@ const SETTINGS_COLLECTION = 'userAppSettings';
 const CONFIG_DOCUMENT_ID = 'mainConfiguration';
 
 exports.handler = async (event, context) => {
-    // We only expect POST requests for this function for now
-    if (event.httpMethod !== 'POST') {
-        return {
-            statusCode: 405, // Method Not Allowed
-            body: JSON.stringify({ error: 'Only POST requests are allowed.' }),
-        };
+    // We now expect POST (for saving) and GET (for loading) requests
+    // For simplicity, we'll just check for the action in the body for POST,
+    // or a query param for GET if we were to implement it that way.
+    // But since index.html will use POST for both for consistency, we'll stick to parsing POST body.
+
+    let body;
+    try {
+        // All requests from our index.html will use POST with a JSON body
+        if (event.httpMethod !== 'POST') {
+             return { statusCode: 405, body: JSON.stringify({ error: 'Only POST requests are allowed for user settings.' }) };
+        }
+        body = JSON.parse(event.body);
+    } catch (error) {
+        console.error('[user-settings] Error parsing request body:', error.message);
+        return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON in request body.' }) };
     }
 
-    try {
-        const body = JSON.parse(event.body);
-        const { action, payload } = body;
+    const { action, payload } = body;
 
+    try {
         if (action === 'saveChannelConfig') {
-            // The payload should be the channelsConfig array
-            const channelsConfig = payload;
+            const channelsConfig = payload; // The payload IS the channelsConfig array
 
             if (!Array.isArray(channelsConfig)) {
                 return {
-                    statusCode: 400, // Bad Request
+                    statusCode: 400,
                     body: JSON.stringify({ error: 'Invalid payload: channelsConfig must be an array.' }),
                 };
             }
 
-            // Get a reference to our specific settings document
             const docRef = firestore.collection(SETTINGS_COLLECTION).doc(CONFIG_DOCUMENT_ID);
-
-            // Save the channelsConfig to Firestore.
-            // The .set() method will create the document if it doesn't exist,
-            // or overwrite it if it does. We want to store the channelsConfig
-            // under a field named 'channels' within this document, just like we set up.
-            // We use { merge: true } just in case there are other fields in the document
-            // we don't want to accidentally wipe out, though for now, 'channels' is the only one.
             await docRef.set({
                 channels: channelsConfig,
-                lastUpdated: new Date().toISOString() // Add a timestamp for when it was last updated
+                lastUpdated: new Date().toISOString()
             }, { merge: true });
 
             console.log(`[user-settings] Successfully saved channelsConfig to Firestore document: ${CONFIG_DOCUMENT_ID}`);
@@ -87,21 +86,41 @@ exports.handler = async (event, context) => {
                 body: JSON.stringify({ success: true, message: 'Channel configuration saved successfully.' }),
             };
 
+        } else if (action === 'loadChannelConfig') { // --- NEW ACTION ---
+            console.log(`[user-settings] Attempting to load channel configuration from Firestore: Document='${CONFIG_DOCUMENT_ID}'`);
+            const docRef = firestore.collection(SETTINGS_COLLECTION).doc(CONFIG_DOCUMENT_ID);
+            const docSnap = await docRef.get();
+
+            if (!docSnap.exists) {
+                console.log(`[user-settings] Document '${CONFIG_DOCUMENT_ID}' does not exist. Returning empty config.`);
+                // It's okay if it doesn't exist yet (e.g., first time user), return an empty array.
+                return {
+                    statusCode: 200, // Successfully handled request, even if no data
+                    body: JSON.stringify({ success: true, channelsConfig: [] }),
+                };
+            }
+
+            const data = docSnap.data();
+            // Ensure the 'channels' field exists and is an array, otherwise return empty
+            const channelsConfig = (data && Array.isArray(data.channels)) ? data.channels : [];
+            
+            console.log(`[user-settings] Successfully loaded channelsConfig from Firestore. Found ${channelsConfig.length} channels.`);
+            return {
+                statusCode: 200,
+                body: JSON.stringify({ success: true, channelsConfig: channelsConfig }),
+            };
+
         } else {
             return {
-                statusCode: 400, // Bad Request
+                statusCode: 400,
                 body: JSON.stringify({ error: `Invalid action: ${action}` }),
             };
         }
 
     } catch (error) {
         console.error('[user-settings] Error processing request:', error.message, error.stack);
-        // Check for JSON parsing errors specifically
-        if (error instanceof SyntaxError && error.message.includes("JSON")) {
-             return { statusCode: 400, body: JSON.stringify({ error: 'Bad request: Invalid JSON in request body.' }) };
-        }
         return {
-            statusCode: 500, // Internal Server Error
+            statusCode: 500,
             body: JSON.stringify({ error: `An internal error occurred: ${error.message}` }),
         };
     }
