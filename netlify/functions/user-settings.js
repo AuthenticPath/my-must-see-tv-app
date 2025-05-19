@@ -9,28 +9,34 @@ const { Firestore } = require('@google-cloud/firestore');
 // For local development, if this env var isn't set in your .env or shell,
 // it might try to find default credentials if you've used `gcloud auth application-default login`.
 // We'll ensure our Netlify setup is the primary way it authenticates.
+// --- MODIFIED Firestore Initialization in user-settings.js ---
 let firestore;
 try {
-    const credentialsJson = process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS;
-    if (!credentialsJson) {
-        console.warn("[user-settings] GOOGLE_SERVICE_ACCOUNT_CREDENTIALS env var not found. Firestore might not initialize correctly in deployed env.");
-        // For local dev without the env var, it might still work if gcloud CLI is auth'd
+    const projectId = process.env.GCP_PROJECT_ID;
+    const clientEmail = process.env.GCP_CLIENT_EMAIL;
+    // The private key from env var might have literal '\n' which need to be actual newlines.
+    const privateKey = process.env.GCP_PRIVATE_KEY ? process.env.GCP_PRIVATE_KEY.replace(/\\n/g, '\n') : undefined;
+
+    if (!projectId || !clientEmail || !privateKey) {
+        console.warn("[user-settings] Missing one or more GCP credential environment variables (GCP_PROJECT_ID, GCP_CLIENT_EMAIL, GCP_PRIVATE_KEY). Firestore might not initialize correctly in deployed env.");
+        // Attempt to initialize without explicit credentials for local gcloud CLI auth
         firestore = new Firestore();
     } else {
-        const credentials = JSON.parse(credentialsJson);
         firestore = new Firestore({
-            projectId: credentials.project_id, // Get project ID from the credentials
-            credentials, // Pass the parsed credentials
+            projectId: projectId,
+            credentials: {
+                client_email: clientEmail,
+                private_key: privateKey,
+            },
         });
-        console.log("[user-settings] Firestore initialized with service account credentials.");
+        console.log("[user-settings] Firestore initialized with split service account credentials.");
     }
 } catch (error) {
     console.error("[user-settings] CRITICAL ERROR initializing Firestore:", error.message, error.stack);
-    // If Firestore fails to initialize, the function can't work.
-    // We'll let it throw so the handler shows an error.
-    throw new Error("Firestore initialization failed. Check GOOGLE_SERVICE_ACCOUNT_CREDENTIALS format and content.");
+    throw new Error("Firestore initialization failed. Check GCP credential environment variables.");
 }
 
+// --- END OF MODIFIED BLOCK ---
 
 // The name of our collection in Firestore
 const SETTINGS_COLLECTION = 'userAppSettings';

@@ -15,24 +15,33 @@ let YOUTUBE_ACCESS_TOKEN = process.env.SCHEDULED_USER_YOUTUBE_ACCESS_TOKEN;
 const YOUTUBE_REFRESH_TOKEN = process.env.SCHEDULED_USER_YOUTUBE_REFRESH_TOKEN;
 
 // Initialize Firestore (same as in user-settings.js)
+// --- MODIFIED Firestore Initialization in scheduled-video-fetch.js ---
 let firestore;
 try {
-    const credentialsJson = process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS;
-    if (!credentialsJson) {
-        console.warn("[Scheduled Fetch] GOOGLE_SERVICE_ACCOUNT_CREDENTIALS env var not found. Firestore might not initialize correctly.");
-        firestore = new Firestore(); // Fallback for local dev if gcloud CLI is auth'd
+    const projectId = process.env.GCP_PROJECT_ID;
+    const clientEmail = process.env.GCP_CLIENT_EMAIL;
+    // The private key from env var might have literal '\n' which need to be actual newlines.
+    const privateKey = process.env.GCP_PRIVATE_KEY ? process.env.GCP_PRIVATE_KEY.replace(/\\n/g, '\n') : undefined;
+
+    if (!projectId || !clientEmail || !privateKey) {
+        console.warn("[Scheduled Fetch] Missing one or more GCP credential environment variables (GCP_PROJECT_ID, GCP_CLIENT_EMAIL, GCP_PRIVATE_KEY). Firestore might not initialize correctly in deployed env.");
+        // Attempt to initialize without explicit credentials for local gcloud CLI auth
+        firestore = new Firestore();
     } else {
-        const credentials = JSON.parse(credentialsJson);
         firestore = new Firestore({
-            projectId: credentials.project_id,
-            credentials,
+            projectId: projectId,
+            credentials: {
+                client_email: clientEmail,
+                private_key: privateKey,
+            },
         });
-        console.log("[Scheduled Fetch] Firestore initialized with service account credentials.");
+        console.log("[Scheduled Fetch] Firestore initialized with split service account credentials.");
     }
 } catch (error) {
     console.error("[Scheduled Fetch] CRITICAL ERROR initializing Firestore:", error.message, error.stack);
-    throw new Error("Firestore initialization failed for scheduled fetch.");
+    throw new Error("Firestore initialization failed for scheduled fetch. Check GCP credential environment variables.");
 }
+// --- END OF MODIFIED BLOCK ---
 
 // Firestore constants (same as in user-settings.js)
 const SETTINGS_COLLECTION = 'userAppSettings';
