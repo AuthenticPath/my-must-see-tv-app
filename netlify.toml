@@ -32,4 +32,4 @@
   # This example means: "At minute 0, past every 12th hour."
   # So, it would run at 00:00 UTC (midnight) and 12:00 UTC (noon).
   # We can change this later if you want a different schedule!
-  schedule = "0 */1 * * *"
+  schedule = "0 */12 * * *"
