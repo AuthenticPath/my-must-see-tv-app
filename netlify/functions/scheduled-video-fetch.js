@@ -1,18 +1,44 @@
 // netlify/functions/scheduled-video-fetch.js
-const fetch = require('node-fetch');
+const fetch = require('node-fetch'); // For YouTube API calls
+const { Firestore } = require('@google-cloud/firestore'); // For Firestore
 
 // These will come from Netlify Environment Variables
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 
-// Configuration specific to the scheduled task (from environment variables)
-const CHANNELS_CONFIG_JSON = process.env.SCHEDULED_USER_CHANNELS_CONFIG;
+// --- REMOVED: CHANNELS_CONFIG_JSON from env, we'll load it from Firestore ---
+// const CHANNELS_CONFIG_JSON = process.env.SCHEDULED_USER_CHANNELS_CONFIG; 
+
 const TARGET_PLAYLIST_ID = process.env.SCHEDULED_USER_TARGET_PLAYLIST_ID;
-let YOUTUBE_ACCESS_TOKEN = process.env.SCHEDULED_USER_YOUTUBE_ACCESS_TOKEN; // Might be initially undefined or stale, will be refreshed
+let YOUTUBE_ACCESS_TOKEN = process.env.SCHEDULED_USER_YOUTUBE_ACCESS_TOKEN;
 const YOUTUBE_REFRESH_TOKEN = process.env.SCHEDULED_USER_YOUTUBE_REFRESH_TOKEN;
 
-// Helper to parse ISO 8601 duration (same as in your youtube-api.js)
+// Initialize Firestore (same as in user-settings.js)
+let firestore;
+try {
+    const credentialsJson = process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS;
+    if (!credentialsJson) {
+        console.warn("[Scheduled Fetch] GOOGLE_SERVICE_ACCOUNT_CREDENTIALS env var not found. Firestore might not initialize correctly.");
+        firestore = new Firestore(); // Fallback for local dev if gcloud CLI is auth'd
+    } else {
+        const credentials = JSON.parse(credentialsJson);
+        firestore = new Firestore({
+            projectId: credentials.project_id,
+            credentials,
+        });
+        console.log("[Scheduled Fetch] Firestore initialized with service account credentials.");
+    }
+} catch (error) {
+    console.error("[Scheduled Fetch] CRITICAL ERROR initializing Firestore:", error.message, error.stack);
+    throw new Error("Firestore initialization failed for scheduled fetch.");
+}
+
+// Firestore constants (same as in user-settings.js)
+const SETTINGS_COLLECTION = 'userAppSettings';
+const CONFIG_DOCUMENT_ID = 'mainConfiguration';
+
+// Helper to parse ISO 8601 duration (same as before)
 function parseISO8601Duration(isoDuration) {
     if (!isoDuration) return 0;
     const regex = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/;
@@ -24,7 +50,7 @@ function parseISO8601Duration(isoDuration) {
     return (hours * 3600) + (minutes * 60) + seconds;
 }
 
-// Helper function to refresh the YouTube Access Token
+// Helper function to refresh the YouTube Access Token (same as before)
 async function refreshAccessToken() {
     console.log("[Scheduled Fetch] Attempting to refresh YouTube access token...");
     if (!YOUTUBE_REFRESH_TOKEN) {
@@ -50,33 +76,28 @@ async function refreshAccessToken() {
     if (!response.ok) {
         const errorData = await response.json();
         console.error("[Scheduled Fetch] Google token refresh error:", errorData);
-        // If refresh token is invalid, this is a critical failure for the scheduled task
-        if (response.status === 400 || response.status === 401) { // Common statuses for invalid refresh token
+        if (response.status === 400 || response.status === 401) {
              console.error("[Scheduled Fetch] CRITICAL: Refresh token may be invalid or revoked. Manual update of SCHEDULED_USER_YOUTUBE_REFRESH_TOKEN environment variable required.");
         }
         throw new Error(`Failed to refresh token: ${errorData.error_description || response.statusText}`);
     }
 
     const tokenData = await response.json();
-    YOUTUBE_ACCESS_TOKEN = tokenData.access_token; // Update the global access token for this run
+    YOUTUBE_ACCESS_TOKEN = tokenData.access_token;
     console.log("[Scheduled Fetch] YouTube access token refreshed successfully.");
-    // Note: Google might also send a new refresh_token (tokenData.refresh_token).
-    // A more robust system would update the stored refresh token if a new one is provided.
-    // For this version, we assume the initial YOUTUBE_REFRESH_TOKEN remains valid for a long time.
 }
 
-// Helper to call YouTube API (adapted for scheduled task)
+// Helper to call YouTube API (same as before)
 async function callYouTubeApi(endpoint, method = 'GET', body = null, useApiKey = false) {
     const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
     const headers = { 'Accept': 'application/json' };
-    let finalEndpoint = endpoint; // Keep original endpoint for logging
+    let finalEndpoint = endpoint;
 
     if (useApiKey) {
         if (!YOUTUBE_API_KEY) {
             console.error("[Scheduled Fetch] Error: YOUTUBE_API_KEY is missing for an API key based call.");
             throw new Error("YOUTUBE_API_KEY is missing.");
         }
-        // Add API key to the endpoint URL
         finalEndpoint = endpoint.includes('?') ? `${endpoint}&key=${YOUTUBE_API_KEY}` : `${endpoint}?key=${YOUTUBE_API_KEY}`;
     } else {
         if (!YOUTUBE_ACCESS_TOKEN) {
@@ -97,8 +118,7 @@ async function callYouTubeApi(endpoint, method = 'GET', body = null, useApiKey =
     
     console.log(`[Scheduled Fetch] Calling YouTube API: ${method} ${YOUTUBE_API_BASE}${finalEndpoint.startsWith('/') ? '' : '/'}${finalEndpoint.split('key=')[0] + (finalEndpoint.includes('key=') ? 'key=******' : '')}`);
 
-
-    const response = await fetch(`${YOUTUBE_API_BASE}${finalEndpoint.startsWith('/') ? '' : '/'}${finalEndpoint}`, options); // Ensure leading / if endpoint doesn't have one
+    const response = await fetch(`${YOUTUBE_API_BASE}${finalEndpoint.startsWith('/') ? '' : '/'}${finalEndpoint}`, options);
     if (!response.ok) {
         const errorData = await response.json();
         const errorMessage = errorData.error?.message || response.statusText || 'Unknown API error';
@@ -112,33 +132,49 @@ async function callYouTubeApi(endpoint, method = 'GET', body = null, useApiKey =
 exports.handler = async (event, context) => {
     console.log("[Scheduled Fetch] Starting scheduled video fetch job at", new Date().toUTCString());
 
-    // Basic check for essential configurations
-    if (!CHANNELS_CONFIG_JSON || !TARGET_PLAYLIST_ID || !YOUTUBE_REFRESH_TOKEN || !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !YOUTUBE_API_KEY) {
-        console.error("[Scheduled Fetch] CRITICAL Error: Missing one or more essential environment variables. Aborting scheduled task.");
+    // Basic check for essential configurations (TARGET_PLAYLIST_ID etc. still needed from env)
+    if (!TARGET_PLAYLIST_ID || !YOUTUBE_REFRESH_TOKEN || !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !YOUTUBE_API_KEY || !process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS) {
+        console.error("[Scheduled Fetch] CRITICAL Error: Missing one or more essential environment variables (excluding channels config). Aborting scheduled task.");
         return { statusCode: 500, body: "Scheduled task configuration error: Essential environment variables missing." };
     }
 
-    let channelsConfig;
-    try {
-        channelsConfig = JSON.parse(CHANNELS_CONFIG_JSON);
-        if (!Array.isArray(channelsConfig)) throw new Error("CHANNELS_CONFIG_JSON is not an array.");
-    } catch (e) {
-        console.error("[Scheduled Fetch] CRITICAL Error parsing CHANNELS_CONFIG_JSON:", e.message, ". Ensure it's a valid JSON array string. Value:", CHANNELS_CONFIG_JSON);
-        return { statusCode: 500, body: "Invalid channels config JSON format." };
-    }
+    let channelsConfig; // This will be populated from Firestore
 
     try {
-        // 1. Refresh the Access Token (absolutely essential)
+        // 0. Initialize Firestore client (moved to top level for clarity, already done)
+
+        // 1. Load Channel Configuration from Firestore
+        console.log(`[Scheduled Fetch] Attempting to load channel configuration from Firestore: Collection='${SETTINGS_COLLECTION}', Document='${CONFIG_DOCUMENT_ID}'`);
+        const configDocRef = firestore.collection(SETTINGS_COLLECTION).doc(CONFIG_DOCUMENT_ID);
+        const configDoc = await configDocRef.get();
+
+        if (!configDoc.exists) {
+            console.error(`[Scheduled Fetch] CRITICAL Error: Configuration document '${CONFIG_DOCUMENT_ID}' does not exist in Firestore collection '${SETTINGS_COLLECTION}'. Please save settings from the app UI first.`);
+            return { statusCode: 500, body: "Channel configuration not found in Firestore." };
+        }
+        
+        const configData = configDoc.data();
+        if (!configData || !Array.isArray(configData.channels)) {
+             console.error(`[Scheduled Fetch] CRITICAL Error: 'channels' field is missing or not an array in Firestore document '${CONFIG_DOCUMENT_ID}'. Data:`, configData);
+             return { statusCode: 500, body: "Invalid channel configuration format in Firestore." };
+        }
+        channelsConfig = configData.channels; // Get the array of channels
+        console.log(`[Scheduled Fetch] Successfully loaded ${channelsConfig.length} channel configurations from Firestore.`);
+        if (channelsConfig.length === 0) {
+            console.log("[Scheduled Fetch] No channels configured in Firestore. Nothing to process.");
+            return { statusCode: 200, body: "No channels configured. Task ended." };
+        }
+
+        // 2. Refresh the Access Token (absolutely essential)
         await refreshAccessToken();
 
-        // 2. Get current items in the target playlist to avoid duplicates
+        // 3. Get current items in the target playlist to avoid duplicates (same as before)
         let videoIdsCurrentlyInPlaylist = new Set();
         try {
             console.log(`[Scheduled Fetch] Fetching current items from playlist ID: ${TARGET_PLAYLIST_ID}`);
             let allPlaylistVideoItems = [];
             let nextPageToken = null;
             do {
-                // PlaylistItems endpoint requires authentication (not API key)
                 const playlistItemsData = await callYouTubeApi(`/playlistItems?part=snippet&playlistId=${TARGET_PLAYLIST_ID}&maxResults=50${nextPageToken ? '&pageToken='+nextPageToken : ''}`);
                 if (playlistItemsData.items) {
                     allPlaylistVideoItems = allPlaylistVideoItems.concat(playlistItemsData.items.map(item => item.snippet.resourceId.videoId));
@@ -149,32 +185,32 @@ exports.handler = async (event, context) => {
             console.log(`[Scheduled Fetch] Found ${videoIdsCurrentlyInPlaylist.size} videos currently in playlist.`);
         } catch (error) {
             console.error("[Scheduled Fetch] Error fetching current playlist items:", error.message, ". Proceeding with empty current playlist for de-duplication for this run.");
-            // If this fails, we rely only on not re-adding videos processed in *this current run*.
         }
 
+        // --- The rest of the logic (fetching videos, filtering, adding to playlist) remains largely the same ---
+        // --- It will now use the 'channelsConfig' loaded from Firestore ---
+
         const threeDaysAgo = new Date();
-        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3); // Look for videos in the last 3 days
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
         const publishedAfterDate = threeDaysAgo.toISOString();
         let allNewVideosForPlaylist = [];
 
-        for (const channel of channelsConfig) {
+        for (const channel of channelsConfig) { // Using channelsConfig from Firestore
             console.log(`[Scheduled Fetch] Processing channel: ${channel.channelId} with keywords: "${channel.keywords || 'Any'}"`);
             try {
-                // Step A: Search for videos (uses API Key)
-                let searchUrl = `/search?part=snippet&channelId=${channel.channelId}&order=date&type=video&maxResults=25&publishedAfter=${publishedAfterDate}`; // MaxResults up to 50
+                let searchUrl = `/search?part=snippet&channelId=${channel.channelId}&order=date&type=video&maxResults=25&publishedAfter=${publishedAfterDate}`;
                 const searchData = await callYouTubeApi(searchUrl, 'GET', null, true);
 
                 if (!searchData.items || searchData.items.length === 0) {
                     console.log(`[Scheduled Fetch] No recent videos found from search for channel ${channel.channelId}.`);
                     continue;
                 }
-                const videoIdsFromSearch = searchData.items.map(item => item.id.videoId).filter(id => id); // Filter out undefined IDs
+                const videoIdsFromSearch = searchData.items.map(item => item.id.videoId).filter(id => id);
                 if (videoIdsFromSearch.length === 0) {
                     console.log(`[Scheduled Fetch] No valid video IDs from search for channel ${channel.channelId}.`);
                     continue;
                 }
 
-                // Step B: Get details for duration (uses API Key)
                 const detailsUrl = `/videos?part=snippet,contentDetails&id=${videoIdsFromSearch.join(',')}`;
                 const detailedData = await callYouTubeApi(detailsUrl, 'GET', null, true);
                 
@@ -183,13 +219,12 @@ exports.handler = async (event, context) => {
                     title: item.snippet.title,
                     description: item.snippet.description,
                     publishedAt: item.snippet.publishedAt,
-                    thumbnail: item.snippet.thumbnails.default.url, // Simplified
+                    thumbnail: item.snippet.thumbnails.default.url,
                     duration: item.contentDetails.duration
                 })) : [];
 
-                // Step C: Apply filters
-                // Positive Keywords
-                if (channel.keywords && channel.keywords.trim() !== "") {
+                // Filters (Positive Keywords, Negative Keywords, Duration)
+                if (channel.keywords && channel.keywords.trim() !== "") { /* ... same filter logic ... */ 
                     const keywordArray = channel.keywords.toLowerCase().split(',').map(k => k.trim()).filter(k => k);
                     fetchedVideos = fetchedVideos.filter(video =>
                         keywordArray.some(keyword =>
@@ -198,8 +233,7 @@ exports.handler = async (event, context) => {
                         )
                     );
                 }
-                // Negative Keywords
-                if (channel.negativeKeywords && channel.negativeKeywords.trim() !== "") {
+                if (channel.negativeKeywords && channel.negativeKeywords.trim() !== "") { /* ... same filter logic ... */
                     const negKeywordArray = channel.negativeKeywords.toLowerCase().split(',').map(k => k.trim()).filter(k => k);
                     fetchedVideos = fetchedVideos.filter(video =>
                         !negKeywordArray.some(negKeyword =>
@@ -208,22 +242,21 @@ exports.handler = async (event, context) => {
                         )
                     );
                 }
-                // Duration
-                if (typeof channel.minDuration === 'number' || typeof channel.maxDuration === 'number') {
+                if (typeof channel.minDuration === 'number' || typeof channel.maxDuration === 'number') { /* ... same filter logic ... */
                     fetchedVideos = fetchedVideos.filter(video => {
                         const durationInMinutes = parseISO8601Duration(video.duration) / 60;
                         const passesMin = (typeof channel.minDuration !== 'number' || durationInMinutes >= channel.minDuration);
                         const passesMax = (typeof channel.maxDuration !== 'number' || durationInMinutes <= channel.maxDuration);
                         return passesMin && passesMax;
-                    });
-                }
-                
+    });
+}
+
                 console.log(`[Scheduled Fetch] Channel ${channel.channelId}: ${fetchedVideos.length} videos after all filters.`);
 
                 fetchedVideos.forEach(video => {
                     if (!videoIdsCurrentlyInPlaylist.has(video.id)) {
                         allNewVideosForPlaylist.push(video);
-                        videoIdsCurrentlyInPlaylist.add(video.id); // Add to set to avoid duplicate from another channel config in THIS run
+                        videoIdsCurrentlyInPlaylist.add(video.id);
                     } else {
                          console.log(`[Scheduled Fetch] Skipping (already in playlist or processed this run): "${video.title}" (ID: ${video.id})`);
                     }
@@ -231,28 +264,25 @@ exports.handler = async (event, context) => {
 
             } catch (channelError) {
                 console.error(`[Scheduled Fetch] Error processing channel ${channel.channelId}:`, channelError.message, channelError.stack);
-                // Continue to the next channel even if one fails
             }
         }
 
         if (allNewVideosForPlaylist.length > 0) {
-            allNewVideosForPlaylist.sort((a, b) => new Date(a.publishedAt) - new Date(b.publishedAt)); // Oldest first
+            allNewVideosForPlaylist.sort((a, b) => new Date(a.publishedAt) - new Date(b.publishedAt));
             console.log(`[Scheduled Fetch] Adding ${allNewVideosForPlaylist.length} new unique videos to playlist ${TARGET_PLAYLIST_ID}.`);
 
             for (const video of allNewVideosForPlaylist) {
                 try {
-                    // Adding to playlist requires authentication (not API key)
                     await callYouTubeApi(`/playlistItems?part=snippet`, 'POST', {
                         snippet: {
                             playlistId: TARGET_PLAYLIST_ID,
-                            position: 0, // Add to the top
+                            position: 0,
                             resourceId: { kind: "youtube#video", videoId: video.id }
                         }
                     });
                     console.log(`[Scheduled Fetch] Successfully added "${video.title}" (ID: ${video.id}) to playlist.`);
                 } catch (addError) {
                     console.error(`[Scheduled Fetch] Error adding video "${video.title}" (ID: ${video.id}) to playlist:`, addError.message);
-                    // If adding one video fails, continue to try adding others
                 }
             }
         } else {
@@ -264,6 +294,8 @@ exports.handler = async (event, context) => {
 
     } catch (error) {
         console.error("[Scheduled Fetch] CRITICAL Error in scheduled task main execution:", error.message, error.stack);
+        // If the error is due to Firestore initialization, it would have been caught earlier by the top-level throw.
+        // This catches errors from token refresh, API calls, or Firestore document access.
         return { statusCode: 500, body: `Scheduled task failed: ${error.message}` };
     }
 };
